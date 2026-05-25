@@ -1,0 +1,7 @@
+packages:
+  - pi-kagi
+  - pi-continue
+
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false

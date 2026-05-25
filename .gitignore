@@ -1,0 +1,6 @@
+node_modules/
+.tmp/
+.mise.local.toml
+pi-session*.html
+current-release-changelog.md
+.DS_Store
