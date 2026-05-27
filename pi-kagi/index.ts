@@ -7,20 +7,61 @@ import { Type } from "typebox";
 
 const KAGI_API_BASE = "https://kagi.com/api/v1";
 const STATE_KEY = Symbol.for("pi-extension:kagi:state");
-const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
+const DEFAULT_GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
+const KAGI_UNAVAILABLE = "Kagi is not available right now.";
+export const KAGI_TIMED_SESSION_ACCESS_MS = 30 * 60 * 1000;
 
-type KagiState = {
+export const KAGI_AUTHORIZATION_CHOICES = {
+	allowOnce: "Allow once",
+	allowThirtyMinutes: "Allow for 30 minutes in session",
+	allowSession: "Allow for session",
+	allowAlways: "Allow always",
+	allowAlwaysAndPersist: "Allow always and persist key",
+	denyOnce: "Deny once",
+	abort: "Abort",
+} as const;
+
+type CredentialScope = "memory" | "global" | "project";
+type PersistedScope = Exclude<CredentialScope, "memory">;
+type SessionAccess = "unasked" | "enabled";
+type BatchDecision = "allow" | "deny";
+type SessionAccessSource = "temporary" | "timed" | PersistedScope;
+
+type BatchAuthorization = {
+	id: string;
+	decision?: BatchDecision;
+	decisionPromise?: Promise<void>;
+};
+
+export type KagiState = {
 	apiKey?: string;
+	apiKeySource?: CredentialScope;
 	apiKeyPromise?: Promise<string>;
-	promptedThisRun: boolean;
+	sessionId?: string;
+	sessionAccess: SessionAccess;
+	sessionAccessSource?: SessionAccessSource;
+	sessionAccessExpiresAt?: number;
+	batch?: BatchAuthorization;
+	batchSequence: number;
 };
 
 type KagiSettings = {
 	apiKey?: string;
+	enabled?: boolean;
 };
 
 type SettingsJson = Record<string, unknown> & {
 	kagi?: KagiSettings;
+};
+
+type Credential = {
+	key: string;
+	scope: CredentialScope;
+};
+
+type ExtensionOptions = {
+	globalSettingsPath?: string;
+	state?: KagiState;
 };
 
 type TextContent = { type: "text"; text: string };
@@ -76,12 +117,18 @@ type ExtractDetails = {
 	response?: KagiResponse<ExtractData>;
 };
 
+export function createKagiState(): KagiState {
+	return { sessionAccess: "unasked", batchSequence: 0 };
+}
+
 function getState(): KagiState {
-	const globalWithState = globalThis as typeof globalThis & { [STATE_KEY]?: KagiState };
-	if (!globalWithState[STATE_KEY]) {
-		globalWithState[STATE_KEY] = { promptedThisRun: false };
-	}
-	return globalWithState[STATE_KEY];
+	const globalWithState = globalThis as typeof globalThis & { [STATE_KEY]?: Partial<KagiState> };
+	const state = globalWithState[STATE_KEY] ?? createKagiState();
+	state.sessionAccess ??= "unasked";
+	state.batchSequence ??= 0;
+	if (state.apiKey && !state.apiKeySource) state.apiKeySource = "memory";
+	globalWithState[STATE_KEY] = state;
+	return state as KagiState;
 }
 
 function readSettingsFile(path: string): SettingsJson {
@@ -102,51 +149,127 @@ function getProjectSettingsPath(ctx: ExtensionContext): string {
 	return join(ctx.cwd, ".pi", "settings.json");
 }
 
-function getKagiSettings(ctx: ExtensionContext): KagiSettings {
-	const globalSettings = readSettingsFile(GLOBAL_SETTINGS_PATH).kagi ?? {};
-	const projectSettings = readSettingsFile(getProjectSettingsPath(ctx)).kagi ?? {};
-	return { ...globalSettings, ...projectSettings };
+function getScopeSettings(ctx: ExtensionContext, globalSettingsPath: string, scope: PersistedScope): KagiSettings {
+	const path = scope === "global" ? globalSettingsPath : getProjectSettingsPath(ctx);
+	return readSettingsFile(path).kagi ?? {};
 }
 
-function persistApiKey(apiKey: string): void {
-	const settings = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	settings.kagi = { ...(settings.kagi ?? {}), apiKey };
-	writeSettingsFile(GLOBAL_SETTINGS_PATH, settings);
+function getEffectivePersistedCredential(ctx: ExtensionContext, globalSettingsPath: string): Credential | undefined {
+	const project = getScopeSettings(ctx, globalSettingsPath, "project");
+	if (project.apiKey) return { key: project.apiKey, scope: "project" };
+	const global = getScopeSettings(ctx, globalSettingsPath, "global");
+	if (global.apiKey) return { key: global.apiKey, scope: "global" };
+	return undefined;
 }
 
-function clearPersistedApiKey(ctx: ExtensionContext): boolean {
-	let changed = false;
-	for (const path of [GLOBAL_SETTINGS_PATH, getProjectSettingsPath(ctx)]) {
+function getAvailableCredential(state: KagiState, ctx: ExtensionContext, globalSettingsPath: string): Credential | undefined {
+	if (state.apiKey) return { key: state.apiKey, scope: state.apiKeySource ?? "memory" };
+	return getEffectivePersistedCredential(ctx, globalSettingsPath);
+}
+
+export function hasMatchingPersistentAuthorization(settings: KagiSettings, key: string): boolean {
+	return Boolean(settings.apiKey && settings.apiKey === key && settings.enabled === true);
+}
+
+function getPersistentAuthorizationScope(
+	state: KagiState,
+	ctx: ExtensionContext,
+	globalSettingsPath: string,
+): PersistedScope | undefined {
+	const credential = getAvailableCredential(state, ctx, globalSettingsPath);
+	if (!credential || credential.scope === "memory") return undefined;
+	const settings = getScopeSettings(ctx, globalSettingsPath, credential.scope);
+	return hasMatchingPersistentAuthorization(settings, credential.key) ? credential.scope : undefined;
+}
+
+function updateKagiSettings(path: string, update: (kagi: KagiSettings) => void): void {
+	const settings = readSettingsFile(path);
+	const kagi = { ...(settings.kagi ?? {}) };
+	update(kagi);
+	settings.kagi = kagi;
+	writeSettingsFile(path, settings);
+}
+
+function persistApiKey(state: KagiState, globalSettingsPath: string, apiKey: string): void {
+	updateKagiSettings(globalSettingsPath, (kagi) => {
+		kagi.apiKey = apiKey;
+	});
+	state.apiKey = apiKey;
+	state.apiKeySource = "global";
+}
+
+function persistAuthorization(
+	state: KagiState,
+	ctx: ExtensionContext,
+	globalSettingsPath: string,
+	credential: Credential,
+): PersistedScope {
+	if (credential.scope === "memory") {
+		updateKagiSettings(globalSettingsPath, (kagi) => {
+			kagi.apiKey = credential.key;
+			kagi.enabled = true;
+		});
+		state.apiKey = credential.key;
+		state.apiKeySource = "global";
+		return "global";
+	}
+
+	const path = credential.scope === "global" ? globalSettingsPath : getProjectSettingsPath(ctx);
+	updateKagiSettings(path, (kagi) => {
+		if (!kagi.apiKey || kagi.apiKey !== credential.key) {
+			throw new Error(`Cannot persist Kagi authorization without a matching ${credential.scope} API key.`);
+		}
+		kagi.enabled = true;
+	});
+	return credential.scope;
+}
+
+function clearPersistedSettings(
+	ctx: ExtensionContext,
+	globalSettingsPath: string,
+	options: { apiKey: boolean; authorization: boolean },
+): { apiKey: boolean; authorization: boolean } {
+	const cleared = { apiKey: false, authorization: false };
+	for (const path of [globalSettingsPath, getProjectSettingsPath(ctx)]) {
 		const settings = readSettingsFile(path);
-		if (settings.kagi?.apiKey !== undefined) {
+		if (!settings.kagi) continue;
+		let changed = false;
+		if (options.apiKey && settings.kagi.apiKey !== undefined) {
 			delete settings.kagi.apiKey;
-			writeSettingsFile(path, settings);
+			cleared.apiKey = true;
 			changed = true;
 		}
+		if (options.authorization && settings.kagi.enabled !== undefined) {
+			delete settings.kagi.enabled;
+			cleared.authorization = true;
+			changed = true;
+		}
+		if (changed) writeSettingsFile(path, settings);
 	}
-	return changed;
+	return cleared;
 }
 
-async function promptForApiKey(ctx: ExtensionContext): Promise<string> {
-	const state = getState();
-	if (state.apiKeyPromise) return state.apiKeyPromise;
+function isInteractiveMode(ctx: ExtensionContext): boolean {
+	const mode = (ctx as ExtensionContext & { mode?: string }).mode;
+	return mode ? mode === "tui" : ctx.hasUI;
+}
 
+async function promptForApiKey(state: KagiState, ctx: ExtensionContext): Promise<string> {
+	if (state.apiKeyPromise) return state.apiKeyPromise;
 	if (!ctx.hasUI) {
 		throw new Error("Kagi API key is not available in memory, and this pi mode cannot prompt for one.");
 	}
 
-	state.promptedThisRun = true;
 	state.apiKeyPromise = (async () => {
 		const value = await ctx.ui.input(
 			"Kagi API key",
-			"Enter your Kagi API key. It will be kept in memory only for this Pi process and will not be written to disk.",
+			"Enter your Kagi API key. It will be kept in memory only until you explicitly persist it.",
 		);
 		const key = value?.trim();
-		if (!key) {
-			throw new Error("No Kagi API key entered.");
-		}
+		if (!key) throw new Error("No Kagi API key entered.");
 		state.apiKey = key;
-		ctx.ui.notify("Kagi API key loaded in memory. Use /kagi-persist-key if you want to save it to Pi settings for future runs.", "info");
+		state.apiKeySource = "memory";
+		ctx.ui.notify("Kagi API key loaded in memory. Use /kagi-persist-key to save it to Pi settings.", "info");
 		return key;
 	})();
 
@@ -157,24 +280,124 @@ async function promptForApiKey(ctx: ExtensionContext): Promise<string> {
 	}
 }
 
-async function getApiKey(ctx: ExtensionContext): Promise<string> {
-	const state = getState();
+async function getApiKey(state: KagiState, ctx: ExtensionContext, globalSettingsPath: string): Promise<string> {
 	if (state.apiKey) return state.apiKey;
 	if (state.apiKeyPromise) return state.apiKeyPromise;
+	const persisted = getEffectivePersistedCredential(ctx, globalSettingsPath);
+	if (persisted) {
+		state.apiKey = persisted.key;
+		state.apiKeySource = persisted.scope;
+		return persisted.key;
+	}
+	return promptForApiKey(state, ctx);
+}
 
-	const settings = getKagiSettings(ctx);
-	if (settings.apiKey) {
-		state.apiKey = settings.apiKey;
-		return settings.apiKey;
+function beginBatch(state: KagiState, id?: string): BatchAuthorization {
+	state.batch = { id: id ?? `batch-${++state.batchSequence}` };
+	return state.batch;
+}
+
+function getBatch(state: KagiState): BatchAuthorization {
+	return state.batch ?? beginBatch(state);
+}
+
+export function expireTimedKagiSessionAccess(state: KagiState, now = Date.now()): boolean {
+	if (state.sessionAccessSource !== "timed" || state.sessionAccessExpiresAt === undefined) return false;
+	if (now < state.sessionAccessExpiresAt) return false;
+	state.sessionAccess = "unasked";
+	state.sessionAccessSource = undefined;
+	state.sessionAccessExpiresAt = undefined;
+	return true;
+}
+
+export function resetKagiSessionAccess(
+	state: KagiState,
+	sessionId: string,
+	persistentScope?: PersistedScope,
+): void {
+	state.sessionId = sessionId;
+	state.sessionAccess = persistentScope ? "enabled" : "unasked";
+	state.sessionAccessSource = persistentScope;
+	state.sessionAccessExpiresAt = undefined;
+	state.batch = undefined;
+}
+
+async function promptForAuthorization(
+	state: KagiState,
+	batch: BatchAuthorization,
+	ctx: ExtensionContext,
+	globalSettingsPath: string,
+): Promise<void> {
+	const credential = getAvailableCredential(state, ctx, globalSettingsPath);
+	const alwaysChoice = credential?.scope === "global" || credential?.scope === "project"
+		? KAGI_AUTHORIZATION_CHOICES.allowAlways
+		: KAGI_AUTHORIZATION_CHOICES.allowAlwaysAndPersist;
+	const choice = await ctx.ui.select("Allow Kagi access?", [
+		KAGI_AUTHORIZATION_CHOICES.allowOnce,
+		KAGI_AUTHORIZATION_CHOICES.allowThirtyMinutes,
+		KAGI_AUTHORIZATION_CHOICES.allowSession,
+		alwaysChoice,
+		KAGI_AUTHORIZATION_CHOICES.denyOnce,
+		KAGI_AUTHORIZATION_CHOICES.abort,
+	]);
+
+	if (choice === KAGI_AUTHORIZATION_CHOICES.allowOnce) {
+		batch.decision = "allow";
+		return;
+	}
+	if (choice === KAGI_AUTHORIZATION_CHOICES.allowThirtyMinutes) {
+		state.sessionAccess = "enabled";
+		state.sessionAccessSource = "timed";
+		state.sessionAccessExpiresAt = Date.now() + KAGI_TIMED_SESSION_ACCESS_MS;
+		return;
+	}
+	if (choice === KAGI_AUTHORIZATION_CHOICES.allowSession) {
+		state.sessionAccess = "enabled";
+		state.sessionAccessSource = "temporary";
+		state.sessionAccessExpiresAt = undefined;
+		return;
+	}
+	if (choice === alwaysChoice) {
+		const key = credential ?? { key: await promptForApiKey(state, ctx), scope: "memory" as const };
+		const scope = persistAuthorization(state, ctx, globalSettingsPath, key);
+		state.sessionAccess = "enabled";
+		state.sessionAccessSource = scope;
+		state.sessionAccessExpiresAt = undefined;
+		ctx.ui.notify(`Kagi is always allowed with the ${scope} API key.`, "info");
+		return;
+	}
+	if (choice === KAGI_AUTHORIZATION_CHOICES.denyOnce) {
+		batch.decision = "deny";
+		throw new Error(KAGI_UNAVAILABLE);
 	}
 
-	if (state.promptedThisRun) {
-		throw new Error(
-			"No Kagi API key is available in memory. The extension prompts automatically at most once per pi run. Use /kagi-load-key to enter a key explicitly, or /kagi-clear-key and try again.",
-		);
-	}
+	ctx.abort();
+	throw new Error("Kagi access was aborted by the user.");
+}
 
-	return promptForApiKey(ctx);
+async function ensureKagiAuthorized(
+	state: KagiState,
+	ctx: ExtensionContext,
+	globalSettingsPath: string,
+): Promise<void> {
+	expireTimedKagiSessionAccess(state);
+	if (state.sessionAccess === "enabled") return;
+	const batch = getBatch(state);
+	if (batch.decision === "allow") return;
+	if (batch.decision === "deny") throw new Error(KAGI_UNAVAILABLE);
+
+	if (!isInteractiveMode(ctx)) {
+		ctx.abort();
+		throw new Error(KAGI_UNAVAILABLE);
+	}
+	if (!batch.decisionPromise) {
+		batch.decisionPromise = promptForAuthorization(state, batch, ctx, globalSettingsPath);
+	}
+	try {
+		await batch.decisionPromise;
+	} finally {
+		batch.decisionPromise = undefined;
+	}
 }
 
 export function parseKagiResponseText<T>(text: string): KagiResponse<T> | undefined {
@@ -196,8 +419,15 @@ export function formatKagiApiError(status: number, text: string, parsed?: KagiRe
 	return `Kagi API request failed with HTTP ${status}${trace}${detail ? `: ${detail}` : fallback}`;
 }
 
-async function postKagi<T>(ctx: ExtensionContext, path: string, body: unknown): Promise<KagiResponse<T>> {
-	const apiKey = await getApiKey(ctx);
+async function postKagi<T>(
+	state: KagiState,
+	ctx: ExtensionContext,
+	globalSettingsPath: string,
+	path: string,
+	body: unknown,
+): Promise<KagiResponse<T>> {
+	await ensureKagiAuthorized(state, ctx, globalSettingsPath);
+	const apiKey = await getApiKey(state, ctx, globalSettingsPath);
 	const response = await fetch(`${KAGI_API_BASE}${path}`, {
 		method: "POST",
 		headers: {
@@ -410,57 +640,127 @@ const extractParameters = Type.Object(
 	{ additionalProperties: false },
 );
 
-export default function (pi: ExtensionAPI) {
-	pi.registerCommand("kagi-clear-key", {
-		description: "Forget the in-memory Kagi API key and remove any persisted Kagi API key from Pi settings",
+function formatKagiStatus(state: KagiState, ctx: ExtensionContext, globalSettingsPath: string): string {
+	expireTimedKagiSessionAccess(state);
+	const credential = getAvailableCredential(state, ctx, globalSettingsPath);
+	const keyStatus = credential
+		? credential.scope === "memory"
+			? "Key: loaded in memory only."
+			: `Key: ${credential.scope} settings${state.apiKey ? " (loaded)" : ""}.`
+		: "Key: unavailable.";
+
+	const batchStatus = state.batch?.decision === "allow"
+		? "Authorization: allowed for the current tool batch."
+		: state.batch?.decision === "deny"
+			? "Authorization: denied for the current tool batch."
+			: undefined;
+	const authorizationStatus = batchStatus ?? (state.sessionAccess === "enabled"
+		? state.sessionAccessSource === "global" || state.sessionAccessSource === "project"
+			? `Authorization: enabled for this session from ${state.sessionAccessSource} settings.`
+			: state.sessionAccessSource === "timed"
+				? "Authorization: enabled temporarily with a 30-minute session limit."
+				: "Authorization: enabled temporarily for this session."
+		: "Authorization: awaiting approval.");
+	return `${keyStatus} ${authorizationStatus}`;
+}
+
+export function registerKagiExtension(pi: ExtensionAPI, options: ExtensionOptions = {}): void {
+	const globalSettingsPath = options.globalSettingsPath ?? DEFAULT_GLOBAL_SETTINGS_PATH;
+	const state = options.state ?? getState();
+
+	pi.on("session_start", (event, ctx) => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		expireTimedKagiSessionAccess(state);
+		if (event.reason === "reload" && state.sessionId === sessionId) {
+			state.batch = undefined;
+			return;
+		}
+		const persistentScope = getPersistentAuthorizationScope(state, ctx, globalSettingsPath);
+		resetKagiSessionAccess(state, sessionId, persistentScope);
+	});
+
+	pi.on("turn_start", (event) => {
+		beginBatch(state, `${state.sessionId ?? "session"}:${event.turnIndex}:${event.timestamp}`);
+	});
+
+	pi.on("turn_end", () => {
+		state.batch = undefined;
+	});
+
+	pi.registerCommand("kagi-enable", {
+		description: "Enable Kagi for this session, prompting for an in-memory API key if needed",
 		handler: async (_args, ctx) => {
-			const state = getState();
+			await getApiKey(state, ctx, globalSettingsPath);
+			state.sessionAccess = "enabled";
+			state.sessionAccessSource = "temporary";
+			state.sessionAccessExpiresAt = undefined;
+			state.batch = undefined;
+			ctx.ui.notify("Kagi enabled for this session.", "info");
+		},
+	});
+
+	pi.registerCommand("kagi-revoke", {
+		description: "Revoke Kagi approval and return to asking on the next use without clearing API keys",
+		handler: async (_args, ctx) => {
+			clearPersistedSettings(ctx, globalSettingsPath, { apiKey: false, authorization: true });
+			state.sessionAccess = "unasked";
+			state.sessionAccessSource = undefined;
+			state.sessionAccessExpiresAt = undefined;
+			state.batch = undefined;
+			ctx.ui.notify("Kagi approval revoked. API keys were kept; the next use will ask again.", "info");
+		},
+	});
+
+	pi.registerCommand("kagi-clear-key", {
+		description: "Forget Kagi API keys, remove persistent authorization, and ask again on the next use",
+		handler: async (_args, ctx) => {
 			state.apiKey = undefined;
+			state.apiKeySource = undefined;
 			state.apiKeyPromise = undefined;
-			state.promptedThisRun = false;
-			const clearedPersistedKey = clearPersistedApiKey(ctx);
-			ctx.ui.notify(clearedPersistedKey ? "Forgot in-memory and persisted Kagi API key." : "Forgot in-memory Kagi API key.", "info");
+			state.sessionAccess = "unasked";
+			state.sessionAccessSource = undefined;
+			state.sessionAccessExpiresAt = undefined;
+			state.batch = undefined;
+			clearPersistedSettings(ctx, globalSettingsPath, { apiKey: true, authorization: true });
+			ctx.ui.notify("Forgot in-memory and persisted Kagi API keys and removed persistent authorization. The next use will ask again.", "info");
 		},
 	});
 
 	pi.registerCommand("kagi-load-key", {
-		description: "Prompt for a Kagi API key and load it in memory for this Pi process",
+		description: "Prompt for an in-memory Kagi API key and enable Kagi for this session",
 		handler: async (_args, ctx) => {
-			await promptForApiKey(ctx);
+			await promptForApiKey(state, ctx);
+			state.sessionAccess = "enabled";
+			state.sessionAccessSource = "temporary";
+			state.sessionAccessExpiresAt = undefined;
+			state.batch = undefined;
+			ctx.ui.notify("Kagi enabled for this session.", "info");
 		},
 	});
 
 	pi.registerCommand("kagi-persist-key", {
-		description: "Persist the in-memory Kagi API key to Pi global settings",
+		description: "Persist the loaded Kagi API key to Pi global settings without changing authorization",
 		handler: async (_args, ctx) => {
-			const state = getState();
 			if (!state.apiKey) {
 				ctx.ui.notify("No Kagi API key is loaded in memory. Use /kagi-load-key or a Kagi tool first to enter one.", "warning");
 				return;
 			}
-			persistApiKey(state.apiKey);
-			ctx.ui.notify("Persisted Kagi API key to Pi global settings as kagi.apiKey. Use /kagi-clear-key to remove it.", "info");
+			persistApiKey(state, globalSettingsPath, state.apiKey);
+			ctx.ui.notify("Persisted Kagi API key to global Pi settings. Authorization was not changed.", "info");
 		},
 	});
 
 	pi.registerCommand("kagi-key-status", {
-		description: "Show whether a Kagi API key is currently held in memory or persisted in Pi settings",
+		description: "Show Kagi API key and authorization status",
 		handler: async (_args, ctx) => {
-			const state = getState();
-			const settings = getKagiSettings(ctx);
-			const persisted = Boolean(settings.apiKey);
-			if (state.apiKey) {
-				ctx.ui.notify(persisted ? "Kagi API key is loaded in memory and persisted in Pi settings." : "Kagi API key is loaded in memory.", "info");
-			} else {
-				ctx.ui.notify(persisted ? "Kagi API key is persisted in Pi settings." : "No Kagi API key is loaded in memory or persisted.", "info");
-			}
+			ctx.ui.notify(formatKagiStatus(state, ctx, globalSettingsPath), "info");
 		},
 	});
 
 	pi.registerTool({
 		name: "kagi_search",
 		label: "Kagi Search",
-		description: "Search the web with Kagi. Uses a persisted Kagi API key if configured, otherwise prompts once and keeps the key in memory only.",
+		description: "Search the web with Kagi.",
 		promptSnippet: "Search the web with Kagi and return cited results.",
 		promptGuidelines: [
 			"Use kagi_search when current web search results would help answer the user's question.",
@@ -471,7 +771,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(formatSearchCall(args, theme), 0, 0);
 		},
 		async execute(_toolCallId, params: SearchParams, _signal, _onUpdate, ctx) {
-			const response = await postKagi<SearchData>(ctx, "/search", buildSearchRequest(params));
+			const response = await postKagi<SearchData>(state, ctx, globalSettingsPath, "/search", buildSearchRequest(params));
 			return {
 				content: [{ type: "text", text: formatSearchResults(response, params) } satisfies TextContent],
 				details: { response },
@@ -482,19 +782,15 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "kagi_extract",
 		label: "Kagi Extract",
-		description: "Extract markdown content from up to 10 URLs using Kagi. Uses a persisted Kagi API key if configured, otherwise prompts once and keeps the key in memory only.",
+		description: "Extract markdown content from URLs with Kagi.",
 		promptSnippet: "Extract readable markdown from URLs with Kagi.",
 		promptGuidelines: ["Use kagi_extract when the user asks to read web pages and URL extraction is preferable to browser automation."],
 		parameters: extractParameters,
 		renderCall(args: ExtractParams, theme) {
 			const urls = Array.isArray(args.urls) ? args.urls : [];
 			const lines = [theme.fg("toolTitle", theme.bold("kagi_extract ")) + theme.fg("muted", `${urls.length} URL${urls.length === 1 ? "" : "s"}`)];
-			for (const url of urls) {
-				lines.push(`  ${theme.fg("accent", url)}`);
-			}
-			if (args.timeout !== undefined) {
-				lines.push(theme.fg("dim", `  timeout: ${args.timeout}s`));
-			}
+			for (const url of urls) lines.push(`  ${theme.fg("accent", url)}`);
+			if (args.timeout !== undefined) lines.push(theme.fg("dim", `  timeout: ${args.timeout}s`));
 			return new Text(lines.join("\n"), 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
@@ -506,7 +802,7 @@ export default function (pi: ExtensionAPI) {
 				content: [{ type: "text", text: `Extracting ${params.urls.length} URL${params.urls.length === 1 ? "" : "s"}:\n${params.urls.join("\n")}` }],
 				details: { urls: params.urls },
 			});
-			const response = await postKagi<ExtractData>(ctx, "/extract", {
+			const response = await postKagi<ExtractData>(state, ctx, globalSettingsPath, "/extract", {
 				pages: params.urls.map((url) => ({ url })),
 				format: "json",
 				...(params.timeout !== undefined ? { timeout: params.timeout } : {}),
@@ -517,4 +813,8 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 	});
+}
+
+export default function (pi: ExtensionAPI): void {
+	registerKagiExtension(pi);
 }

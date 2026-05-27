@@ -4,3 +4,4 @@ node_modules/
 pi-session*.html
 current-release-changelog.md
 .DS_Store
+.pi/todos

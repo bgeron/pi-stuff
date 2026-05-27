@@ -14,6 +14,8 @@ Useful starting points include:
 - package manifests
 - TypeScript config, source, and test files
 
+New extensions should be publishable workspace packages in their own subdirectories, following the structure and conventions of the existing `pi-*` packages.
+
 When adding, removing, renaming, or moving packages, check package manifests, README docs, mise tasks, and workspace config together.
 
 Do not update release note files during normal development. Generating or editing release notes is a release-only task and should be done per package.

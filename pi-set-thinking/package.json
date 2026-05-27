@@ -1,0 +1,49 @@
+{
+  "name": "@bramgeron/pi-set-thinking",
+  "version": "0.1.0",
+  "description": "Pi extension for cycling the active thinking level backward",
+  "homepage": "https://github.com/bgeron/pi-stuff",
+  "author": "Bram Geron",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bgeron/pi-stuff.git",
+    "directory": "pi-set-thinking"
+  },
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "thinking",
+    "reasoning"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "rm -rf .tmp/tests && tsc -p tsconfig.test.json && node --test .tmp/tests/index.test.js",
+    "smoke": "rm -rf .tmp/smoke && mkdir -p .tmp/smoke && pnpm pack --pack-destination .tmp/smoke >/dev/null && tar -xzf \"$(find .tmp/smoke -maxdepth 1 -name '*.tgz' -print -quit)\" -C .tmp/smoke && printf '{\"id\":\"smoke\",\"type\":\"get_commands\"}\\n' | pi --no-extensions --no-session --offline -e .tmp/smoke/package --mode rpc | grep -q '\"success\":true'",
+    "clean": "rm -rf ../.tmp .tmp node_modules",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run smoke"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.79.0",
+    "@earendil-works/pi-coding-agent": ">=0.79.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@types/node": "^25.9.1",
+    "typescript": "6.0.3"
+  }
+}

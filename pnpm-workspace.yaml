@@ -1,6 +1,8 @@
 packages:
   - pi-kagi
+  - pi-set-thinking
   - pi-continue
+  - pi-draft-response
 
 allowBuilds:
   '@google/genai': false

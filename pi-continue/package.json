@@ -1,7 +1,7 @@
 {
   "name": "@bramgeron/pi-continue",
   "version": "0.1.0",
-  "description": "Pi extension for sending Continue steering messages",
+  "description": "Pi extension for expanding configurable prompt snippets",
   "homepage": "https://github.com/bgeron/pi-stuff",
   "author": "Bram Geron",
   "repository": {
@@ -39,8 +39,11 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
+  "dependencies": {
+    "yaml": "2.9.0"
+  },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.75.5",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "@types/node": "^25.9.1",
     "typescript": "6.0.3"
   }
