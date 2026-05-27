@@ -4,8 +4,8 @@
 fd = "latest"
 git-cliff = "latest"
 node = "latest"
+"npm:pnpm" = "latest"
 pi = "latest"
-pnpm = "latest"
 shellcheck = "latest"
 
 [settings]
