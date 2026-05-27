@@ -2,8 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    "outDir": "../.tmp/continue-tests",
-    "rootDir": "..",
+    "outDir": ".tmp/tests",
+    "rootDir": ".",
     "sourceMap": true
   },
   "include": ["index.ts", "index.test.ts"]

@@ -27,7 +27,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "rm -rf ../.tmp/kagi-tests && tsc -p tsconfig.test.json && node --test ../.tmp/kagi-tests/pi-kagi/index.test.js",
+    "test": "rm -rf .tmp/tests && tsc -p tsconfig.test.json && node --test .tmp/tests/index.test.js",
     "smoke": "rm -rf .tmp/smoke && mkdir -p .tmp/smoke && pnpm pack --pack-destination .tmp/smoke >/dev/null && tar -xzf \"$(find .tmp/smoke -maxdepth 1 -name '*.tgz' -print -quit)\" -C .tmp/smoke && printf '{\"id\":\"smoke\",\"type\":\"get_commands\"}\\n' | pi --no-extensions --no-session --offline -e .tmp/smoke/package --mode rpc | grep -q '\"name\":\"kagi-load-key\"'",
     "clean": "rm -rf ../.tmp .tmp node_modules",
     "check": "pnpm run typecheck && pnpm run test && pnpm run smoke"
