@@ -9,3 +9,23 @@ Inspired by Armin Ronacher https://github.com/mitsuhiko/agent-stuff/ .
 {% for package in packages %}{{ package.rootReadme }}{% if not loop.last %}
 
 {% endif %}{% endfor %}
+
+## Skills
+
+### `mssql`
+
+[SQL Server documentation guidance](skill-mssql/SKILL.md) backed by the separately installed `librarian` skill's cached `MicrosoftDocs/sql-docs` checkout. Includes a topic map, example searches, include-reference guidance, and version/applicability caveats. Searches focus on SQL Server rather than dedicated Azure SQL, Synapse, or Fabric content.
+
+Try it from this repository:
+
+```bash
+pi --skill ./skill-mssql
+```
+
+For this local setup, install through the persistent skills directory (`~/.pi/agent/skills` already points there):
+
+```bash
+ln -s /workspace/pi-stuff/skill-mssql /workspace/saved/pi/skills/mssql
+```
+
+Run `/reload` in an existing Pi session, then use `/skill:mssql` or let Pi select it for SQL Server questions. The upstream docs are not bundled here: librarian populates the cache on first use, requiring network access. Once precached, the Markdown and include files can be read offline; the skill explains how to keep using them if a refresh fails.
