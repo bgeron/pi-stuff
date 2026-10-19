@@ -11,6 +11,26 @@ Tools to query the [Kagi](https://kagi.com/) search engine:
 - `kagi_search` — search the web with Kagi.
 - `kagi_extract` — extract readable markdown from URLs with Kagi.
 
+Requires Pi 1.3.0 or newer.
+
+## Codemode activity cards
+
+In Pi's interactive terminal, Kagi calls made through codemode always show human-only activity cards. Each API call gets its own card, even when the script filters or discards the returned output. Direct tool calls keep their normal display without duplicate cards.
+
+While calls are pending, a widget above the editor shows their actual search queries or extraction URLs. Completed cards summarize the operation, result count or extracted character count, status, and elapsed time. Failed attempts also leave error cards; approval is still required before any API access.
+
+Use Pi's expand-tools shortcut, shown on each card, to inspect:
+
+- The full tool input, including all supplied options.
+- The complete formatted text returned to codemode, before script-side filtering—not just what the script prints. Activity cards do not add preview limits or truncation to this text.
+- Kagi trace IDs when present in the formatted output, and errors or cancellation information.
+
+Cards record the final tool output after other extensions' result transformations, so redacted output stays redacted. Raw API JSON is not included in activity records.
+
+**Persistence and privacy:** full tool inputs and formatted outputs are saved in the Pi session file and remain inspectable after reloads, resuming, and restarts. This includes potentially sensitive queries, URLs, and extracted page content. API credentials and HTTP request headers are not added to these records. The cards themselves never enter model context or consume additional model-input tokens.
+
+Activity cards are terminal-only; RPC, JSON, and print modes retain their existing tool behavior without these extra records.
+
 ## Authorization and API keys
 
 The extension keeps API keys and permission to use Kagi separate. Every Kagi request is checked by the extension before any network access.

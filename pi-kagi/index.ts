@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
+import { registerKagiActivity } from "./activity.js";
 
 const KAGI_API_BASE = "https://kagi.com/api/v1";
 const STATE_KEY = Symbol.for("pi-extension:kagi:state");
@@ -667,6 +668,23 @@ function formatKagiStatus(state: KagiState, ctx: ExtensionContext, globalSetting
 export function registerKagiExtension(pi: ExtensionAPI, options: ExtensionOptions = {}): void {
 	const globalSettingsPath = options.globalSettingsPath ?? DEFAULT_GLOBAL_SETTINGS_PATH;
 	const state = options.state ?? getState();
+	const activity = registerKagiActivity(pi, (event, input, output) => {
+		const response = event.result.details?.response;
+		if (!response) return undefined;
+		// Only summarize details that still match the final text. A tool_result
+		// handler may have redacted content without removing the original details.
+		if (event.toolName === "kagi_search") {
+			const searchResponse = response as KagiResponse<SearchData>;
+			if (output !== formatSearchResults(searchResponse, input as SearchParams)) return undefined;
+			const count = Object.values(searchResponse.data ?? {})
+				.reduce((sum, results) => sum + (Array.isArray(results) ? results.length : 0), 0);
+			return `${count} result${count === 1 ? "" : "s"}`;
+		}
+		const extractResponse = response as KagiResponse<ExtractData>;
+		if (output !== formatExtractResults(extractResponse)) return undefined;
+		const chars = (extractResponse.data ?? []).reduce((sum, page) => sum + (page.markdown?.trim().length ?? 0), 0);
+		return `${chars} chars extracted`;
+	});
 
 	pi.on("session_start", (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -770,7 +788,8 @@ export function registerKagiExtension(pi: ExtensionAPI, options: ExtensionOption
 		renderCall(args: SearchParams, theme) {
 			return new Text(formatSearchCall(args, theme), 0, 0);
 		},
-		async execute(_toolCallId, params: SearchParams, _signal, _onUpdate, ctx) {
+		async execute(toolCallId, params: SearchParams, signal, _onUpdate, ctx) {
+			activity.executing(toolCallId, params, signal ?? ctx.signal, ctx);
 			const response = await postKagi<SearchData>(state, ctx, globalSettingsPath, "/search", buildSearchRequest(params));
 			return {
 				content: [{ type: "text", text: formatSearchResults(response, params) } satisfies TextContent],
@@ -797,7 +816,8 @@ export function registerKagiExtension(pi: ExtensionAPI, options: ExtensionOption
 			const details = result.details as ExtractDetails | undefined;
 			return new Text(formatExtractResultForDisplay(details?.response, expanded, theme), 0, 0);
 		},
-		async execute(_toolCallId, params: ExtractParams, _signal, onUpdate, ctx) {
+		async execute(toolCallId, params: ExtractParams, signal, onUpdate, ctx) {
+			activity.executing(toolCallId, params, signal ?? ctx.signal, ctx);
 			onUpdate?.({
 				content: [{ type: "text", text: `Extracting ${params.urls.length} URL${params.urls.length === 1 ? "" : "s"}:\n${params.urls.join("\n")}` }],
 				details: { urls: params.urls },
