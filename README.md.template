@@ -2,7 +2,7 @@
 
 This directory contains extensions and skills that Bram (github:@bgeron, npm:@bramgeron) uses for the [Pi coding agent](https://pi.dev/). Most of this is vibe-coded. I don't expect many changes in these packages, but I also don't guarantee any stability. Pull requests will most likely not be considered and I don't expect to give support on it, but I may hop into the GitHub discussions from time to time. If you find this useful, please fork and adapt it to your own needs.
 
-Inspired by Armin Ronacher https://github.com/mitsuhiko/agent-stuff/ .
+Inspired by Armin Ronacher https://github.com/mitsuhiko/agent-stuff/ , of which I also have a fork https://github.com/bgeron/mitsuhiko-agent-stuff
 
 ## Packages
 
