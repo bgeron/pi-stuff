@@ -6,7 +6,9 @@ Inspired by Armin Ronacher https://github.com/mitsuhiko/agent-stuff/ .
 
 ## Packages
 
-### `@bramgeron/pi-continue`
+The names below identify workspace packages; they do not imply that a package has been published to npm. Usage examples load packages from this checkout, with paths relative to the repository root.
+
+### `pi-continue`
 
 A tiny Pi extension for the moments when you want to nudge the agent without typing the same little instruction again and again.
 
@@ -22,15 +24,9 @@ expands into the editor as:
 finish the tests. Continue
 ```
 
-#### Install
+#### Local usage
 
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-continue
-```
-
-Run Pi with the development version from this repository:
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-continue
@@ -219,13 +215,7 @@ If the entire snippet map lives in one file, `continue.snippets` may still be th
 
 File type is determined by the mandatory `.json`, `.yaml`, or `.yml` extension. Leading `~` is expanded to the home directory; other relative paths are resolved from the global settings directory (`~/.pi/agent` by default).
 
-### `@bramgeron/pi-draft-response`
-
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-draft-response
-```
+### `pi-draft-response`
 
 Command for editing review-response drafts in TOML review files:
 
@@ -233,19 +223,15 @@ Command for editing review-response drafts in TOML review files:
 
 You can replace `human-response` with another simple TOML field name. In each tab, the UI shows the comment location and the review comment truncated to three lines. Saving writes non-empty field values, creates missing fields, and removes fields whose edited value is empty.
 
-Run pi with the development version from the subdirectory:
+#### Local usage
+
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-draft-response
 ```
 
-### `@bramgeron/pi-kagi`
-
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-kagi
-```
+### `pi-kagi`
 
 Tools to query the [Kagi](https://kagi.com/) search engine:
 
@@ -312,7 +298,9 @@ Unauthorized calls in print, JSON, and RPC modes fail closed and abort the activ
 - `/kagi-key-status` — show key and authorization status, including their scope.
 - `/kagi-clear-key` — clear in-memory and persisted keys, remove persistent approval from global and current-project settings, and ask again on the next use.
 
-Run Pi with the development version from the subdirectory:
+#### Local usage
+
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-kagi
@@ -323,7 +311,7 @@ Useful links:
 - OpenAPI: https://kagi.com/api/docs/_spec/openapi.yaml
 - Generated HTML docs: https://kagi.com/api/docs/openapi
 
-### `@bramgeron/pi-set-thinking`
+### `pi-set-thinking`
 
 Cycle Pi's thinking level backward with Alt+Shift+Tab. Pi's native Shift+Tab shortcut continues to cycle forward.
 
@@ -333,15 +321,9 @@ Your terminal must report Alt+Shift+Tab to Pi rather than intercepting it as a d
 
 Requires Pi 0.79.0 or newer.
 
-#### Install
+#### Local usage
 
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-set-thinking
-```
-
-Run Pi with the development version from this repository:
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-set-thinking

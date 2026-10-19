@@ -14,15 +14,9 @@ expands into the editor as:
 finish the tests. Continue
 ```
 
-## Install
+## Local usage
 
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-continue
-```
-
-Run Pi with the development version from this repository:
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-continue

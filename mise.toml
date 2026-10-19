@@ -161,7 +161,7 @@ const packages = JSON.parse(process.env.README_PACKAGES ?? "[]").map((pkg) => {
   return {
     ...pkg,
     readme,
-    rootReadme: demoteMarkdownHeadings(readme, 2),
+    rootReadme: demoteMarkdownHeadings(readme.replace(/^# `@bramgeron\//, "# `"), 2),
   };
 });
 

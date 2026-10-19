@@ -6,6 +6,8 @@ Inspired by Armin Ronacher https://github.com/mitsuhiko/agent-stuff/ .
 
 ## Packages
 
+The names below identify workspace packages; they do not imply that a package has been published to npm. Usage examples load packages from this checkout, with paths relative to the repository root.
+
 {% for package in packages %}{{ package.rootReadme }}{% if not loop.last %}
 
 {% endif %}{% endfor %}

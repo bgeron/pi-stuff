@@ -8,15 +8,9 @@ Your terminal must report Alt+Shift+Tab to Pi rather than intercepting it as a d
 
 Requires Pi 0.79.0 or newer.
 
-## Install
+## Local usage
 
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-set-thinking
-```
-
-Run Pi with the development version from this repository:
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-set-thinking

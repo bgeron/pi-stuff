@@ -1,11 +1,5 @@
 # `@bramgeron/pi-kagi`
 
-Install from npm after release:
-
-```bash
-pi install npm:@bramgeron/pi-kagi
-```
-
 Tools to query the [Kagi](https://kagi.com/) search engine:
 
 - `kagi_search` — search the web with Kagi.
@@ -71,7 +65,9 @@ Unauthorized calls in print, JSON, and RPC modes fail closed and abort the activ
 - `/kagi-key-status` — show key and authorization status, including their scope.
 - `/kagi-clear-key` — clear in-memory and persisted keys, remove persistent approval from global and current-project settings, and ask again on the next use.
 
-Run Pi with the development version from the subdirectory:
+## Local usage
+
+Load this package from the repository root:
 
 ```bash
 pi -e ./pi-kagi
